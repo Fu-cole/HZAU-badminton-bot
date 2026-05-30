@@ -1,0 +1,84 @@
+﻿# ============================================
+# 华中农业大学羽毛球场馆自动抢场脚本 - 配置文件
+# ============================================
+
+# --- 登录凭证 ---
+credentials:
+  # 学号（智慧狮山CAS登录）
+  student_id: "YOUR_STUDENT_ID"
+  # 密码
+  password: "YOUR_PASSWORD"
+
+# --- 预订偏好 ---
+preferences:
+  # 目标场馆名称（在预订页面显示的名称，支持模糊匹配）
+  venue_name: "羽毛球"
+
+  # 时段偏好（按优先级排序，脚本会逐个尝试）
+  # 每天最多预订连续2小时，同一用户只能有一个有效预约
+  time_slots:
+    # 晚间场（优先）
+    - start: "19:00"
+      end: "21:00"
+    - start: "20:00"
+      end: "22:00"
+    # 下午场（备选）
+    - start: "16:00"
+      end: "18:00"
+    - start: "15:00"
+      end: "17:00"
+    - start: "14:00"
+      end: "16:00"
+    - start: "13:00"
+      end: "15:00"
+
+# --- 脚本行为 ---
+behavior:
+  # 预订页面URL
+  reserve_url: "https://zhcg.hzau.edu.cn/#/reserveList?uuid=492f6b87ffda42879b152d31e9581c78"
+
+  # 每天几点开始尝试预订（建议设为15:59:55，提前几秒确保就绪）
+  schedule_time: "15:59:55"
+
+  # 浏览器模式：false=无头模式(后台), true=显示浏览器窗口(调试时建议开启)
+  headless: false
+
+  # 是否使用已保存的登录会话（避免每次都重新登录和滑块验证）
+  use_saved_session: true
+
+  # 重试次数（抢场失败后重试）
+  max_retries: 3
+  retry_interval: 5  # 重试间隔（秒）
+
+
+# --- 邮件通知 ---
+# 预约成功/失败时发送邮件提醒，方便在手机上收到通知后用企业微信付款
+email:
+  # 是否启用邮件通知
+  enabled: true
+
+  # SMTP 服务器配置
+  # QQ邮箱: smtp.qq.com, 端口465(SSL), 需开启SMTP服务并使用授权码
+  # 163邮箱: smtp.163.com, 端口465(SSL)
+  smtp_server: "smtp.qq.com"
+  smtp_port: 465
+
+  # 发件人邮箱地址
+  sender: "your_email@qq.com"
+
+  # SMTP 授权码（不是邮箱密码！QQ邮箱需在设置-账户中生成）
+  password: "wdynvpoqtzoabdhg"
+
+  # 收件人邮箱列表（可以填多个）
+  recipients:
+    - "your_email@qq.com"
+
+
+# --- 通知配置 ---
+notification:
+  # Windows 桌面通知（需要 win10toast 或 plyer）
+  desktop_enabled: true
+
+  # 企业微信机器人 Webhook（可选）
+  # 在企业微信群中添加机器人，获取 Webhook 地址填入
+  wecom_webhook: ""

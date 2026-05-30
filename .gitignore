@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Sensitive files — NEVER commit these
+config.yaml
+session.json
+
+# Debug outputs
+debug_*.png
+debug_*.html
+captcha_*.png
+test_*.png
+page_*.html
+
+# IDE
+.vscode/
+.idea/
