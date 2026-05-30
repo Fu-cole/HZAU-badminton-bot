@@ -89,11 +89,11 @@ async def navigate_to_venue(page: Page, venue_name: str, reserve_url: str) -> bo
 
     if "reserveList" not in current_url and "reserve" not in current_url.lower():
         print(f"[预订] 导航到预订页面: {reserve_url}")
-        await page.goto(reserve_url, wait_until="networkidle", timeout=30000)
+        await page.goto(reserve_url, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(3)
 
-    await page.wait_for_load_state("networkidle")
-    await asyncio.sleep(2)
+    await page.wait_for_load_state("networkidle", timeout=30000)
+    await asyncio.sleep(5)
 
     print(f"[预订] 当前 URL: {page.url[:100]}")
 
@@ -169,9 +169,9 @@ async def select_date(page: Page, target_date_str: str = None) -> bool:
         if date_dot in text:
             print(f"[预订] 点击日期: [{text}]")
             await item.click()
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
             try:
-                await page.wait_for_selector('.sites-item', state="visible", timeout=10000)
+                await page.wait_for_selector('.sites-item', state="visible", timeout=30000)
             except Exception:
                 pass
             await asyncio.sleep(1)
@@ -302,11 +302,11 @@ async def click_slot_and_book(page: Page, slot: dict) -> bool:
 
         print(f"[预订] 点击第一个时段: {slot1['time_text']}")
         await slot1["time_element"].click()
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
 
         print(f"[预订] 点击第二个时段: {slot2['time_text']}")
         await slot2["time_element"].click()
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
 
         await page.screenshot(path=str(ROOT / "debug_selected_slots.png"))
     except Exception as e:
@@ -317,9 +317,15 @@ async def click_slot_and_book(page: Page, slot: dict) -> bool:
 
 
 async def confirm_booking(page: Page) -> bool:
-    """点击底部预约按钮，处理后续确认对话框"""
+    """
+    点击底部预约按钮，处理须知确认对话框，判断是否成功锁定场地。
+
+    流程: 点击预约 -> 确认须知弹窗 -> 检测是否跳转支付页/成功提示
+    返回 True 表示场地已锁定，False 表示失败。
+    """
     await asyncio.sleep(0.5)
 
+    # 1. 找到预约按钮
     btn_selectors = [
         '.footer-container .btn:not(.btn-disabled)',
         '.btn:not(.btn-disabled):has-text("预约")',
@@ -332,8 +338,7 @@ async def confirm_booking(page: Page) -> bool:
         try:
             btn = await page.query_selector(sel)
             if btn:
-                text = await btn.text_content()
-                text = text.strip()
+                text = (await btn.text_content() or "").strip()
                 if "预约" in text:
                     reserve_btn = btn
                     print(f"[预订] 找到预约按钮: {text}")
@@ -347,8 +352,9 @@ async def confirm_booking(page: Page) -> bool:
         return False
 
     await reserve_btn.click()
-    await asyncio.sleep(2)
+    await asyncio.sleep(5)
 
+    # 2. 处理须知确认弹窗（与预约按钮点击后弹出）
     dialog_selectors = [
         '.el-dialog__wrapper:not([style*="display: none"])',
         '.el-message-box__wrapper:not([style*="display: none"])',
@@ -377,29 +383,69 @@ async def confirm_booking(page: Page) -> bool:
             try:
                 btn = await page.query_selector(sel)
                 if btn:
-                    text = await btn.text_content()
-                    print(f"[预订] 点击确认: {text.strip()}")
+                    text = (await btn.text_content() or "").strip()
+                    print(f"[预订] 确认须知: {text}")
                     await btn.click()
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(5)
                     break
             except Exception:
                 continue
 
+    # 高峰期可能响应慢，多等一会儿
+    await asyncio.sleep(5)
     await page.screenshot(path=str(ROOT / "debug_booking_result.png"))
 
-    try:
-        success = await page.query_selector(
-            '.el-message--success, [class*="success"], '
-            'text=预约成功, text=预订成功, text=成功'
-        )
-        if success:
-            print("[预订] 预订成功！")
-            return True
-    except Exception:
-        pass
+    # 3. 判断结果 —— 多种成功信号
+    success_indicators = [
+        # 成功提示消息
+        '.el-message--success',
+        '.el-message .el-message--success',
+        # 页面文本
+        'text=预约成功',
+        'text=预订成功',
+        # URL 跳转到支付/订单页
+    ]
 
-    print("[预订] 预约流程已执行（请查看截图确认结果）")
-    return True
+    for indicator in success_indicators:
+        try:
+            el = await page.query_selector(indicator)
+            if el:
+                print("[预订] 预订成功！场地已锁定。")
+                return True
+        except Exception:
+            continue
+
+    # 检查是否跳转到了支付相关页面
+    current_url = page.url
+    if "pay" in current_url.lower() or "order" in current_url.lower():
+        print(f"[预订] 已跳转支付页面: {current_url[:100]}")
+        return True
+
+    # 4. 检测失败信号
+    error_indicators = [
+        '.el-message--error',
+        'text=已被预约',
+        'text=预约失败',
+        'text=已满',
+        'text=不可预约',
+    ]
+    for indicator in error_indicators:
+        try:
+            el = await page.query_selector(indicator)
+            if el:
+                text = (await el.text_content() or "").strip()
+                print(f"[预订] 预约失败: {text}")
+                return False
+        except Exception:
+            continue
+
+    # 5. 无法确定 —— 检查是否还在预约页面
+    if "reserveList" in current_url:
+        print("[预订] 仍在预约页面，可能预约失败")
+        return False
+
+    print("[预订] 无法判断结果（请查看截图 debug_booking_result.png）")
+    return False
 
 
 async def reserve_slot(
@@ -431,8 +477,8 @@ async def reserve_slot(
         if attempt > 0:
             print(f"[预订] 等待 {retry_interval} 秒后重试...")
             await asyncio.sleep(retry_interval)
-            await page.reload(wait_until="networkidle")
-            await asyncio.sleep(3)
+            await page.reload(wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
             # 再次处理可能出现的须知弹窗
             await dismiss_notice_dialog(page)
             await navigate_to_venue(page, venue_name, reserve_url)
@@ -509,8 +555,8 @@ async def wait_for_booking_open(page: Page, target_time_str: str = "16:00:00") -
         else:
             await asyncio.sleep(0.1)
 
-    await page.reload(wait_until="networkidle")
-    await asyncio.sleep(2)
+    await page.reload(wait_until="domcontentloaded", timeout=60000)
+    await asyncio.sleep(5)
     print("[预订] 页面已刷新，准备抢场！")
 
 
