@@ -8,6 +8,28 @@ from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 ROOT = Path(__file__).parent
 
 
+
+async def _robust_goto(page, url, max_retries=3):
+    """高峰期容错导航：networkidle 超时则降级为 domcontentloaded，加载失败则刷新重试"""
+    for attempt in range(max_retries):
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=45000)
+            await asyncio.sleep(2)
+            return True
+        except Exception as e:
+            print(f"[导航] networkidle 超时 (第{attempt+1}次): {e}")
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)
+                return True
+            except Exception as e2:
+                print(f"[导航] domcontentloaded 也失败: {e2}")
+                if attempt < max_retries - 1:
+                    print(f"[导航] 刷新重试...")
+                    await asyncio.sleep(3)
+    return False
+
+
 async def launch_browser(headless: bool = False):
     pw = await async_playwright().start()
     browser = await pw.chromium.launch(
@@ -121,8 +143,8 @@ async def login(
         # 导航到预订页面
         if "reserveList" not in current_url:
             print(f"[登录] 导航到预订页面...")
-            await page.goto(reserve_url, wait_until="networkidle", timeout=30000)
-            await asyncio.sleep(3)
+            await _robust_goto(page, reserve_url)
+            await asyncio.sleep(2)
 
         await page.screenshot(path=str(ROOT / "debug_after_login.png"))
         print("[登录] 登录完成！")
@@ -387,8 +409,11 @@ async def restore_session(reserve_url: str, headless: bool = False, storage_stat
             storage_state=storage_state_path,
         )
         page = await context.new_page()
-        await page.goto(reserve_url, wait_until="networkidle", timeout=30000)
-        await asyncio.sleep(3)
+        ok = await _robust_goto(page, reserve_url)
+        if not ok:
+            print("[会话] 页面加载失败")
+            await browser.close()
+            return None
 
         if "cas" in page.url.lower() and "login" in page.url.lower():
             print("[会话] 已过期")

@@ -11,6 +11,23 @@ from playwright.async_api import Page
 ROOT = Path(__file__).parent
 
 
+
+async def _wait_for_page_ready(page: Page, timeout: int = 30) -> bool:
+    """等待页面内容加载完成，如果超时或页面空白则返回 False"""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            # 检查关键元素是否存在
+            date_items = await page.query_selector_all('.date-item')
+            site_items = await page.query_selector_all('.sites-item')
+            if len(date_items) > 0 or len(site_items) > 0:
+                return True
+        except Exception:
+            pass
+        await asyncio.sleep(1)
+    return False
+
+
 async def dismiss_notice_dialog(page: Page) -> bool:
     """
     检测并关闭预约页面的须知弹窗。
@@ -133,7 +150,26 @@ async def navigate_to_venue(page: Page, venue_name: str, reserve_url: str) -> bo
         print(f"[预订] 找到 {len(sites)} 个场地，已就绪")
         return True
 
-    print("[预订] 未能定位到场地列表")
+    print("[预订] 未能定位到场地列表，将刷新重试")
+    return False
+
+
+async def _navigate_with_retry(page: Page, venue_name: str, reserve_url: str, max_retries: int = 3) -> bool:
+    """带重试的场馆导航，高峰期页面可能加载空白"""
+    for attempt in range(max_retries):
+        if attempt > 0:
+            print(f"[预订] 页面加载重试 {attempt + 1}/{max_retries}...")
+            await asyncio.sleep(3)
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=60000)
+            except Exception:
+                await page.goto(reserve_url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
+
+        ok = await _navigate_with_retry(page, venue_name, reserve_url)
+        if ok:
+            return True
+
     return False
 
 
@@ -466,7 +502,7 @@ async def reserve_slot(
     返回: (True, slot_info_dict) 表示成功, False 表示失败
     slot_info_dict 包含 court_name 和 time_text
     """
-    ok = await navigate_to_venue(page, venue_name, reserve_url)
+    ok = await _navigate_with_retry(page, venue_name, reserve_url)
     if not ok:
         print("[预订] 无法定位到目标场馆")
         return False
@@ -481,7 +517,7 @@ async def reserve_slot(
             await asyncio.sleep(5)
             # 再次处理可能出现的须知弹窗
             await dismiss_notice_dialog(page)
-            await navigate_to_venue(page, venue_name, reserve_url)
+            await _navigate_with_retry(page, venue_name, reserve_url)
 
         await select_date(page)
         if attempt == 0:
@@ -555,8 +591,20 @@ async def wait_for_booking_open(page: Page, target_time_str: str = "16:00:00") -
         else:
             await asyncio.sleep(0.1)
 
-    await page.reload(wait_until="domcontentloaded", timeout=60000)
-    await asyncio.sleep(5)
-    print("[预订] 页面已刷新，准备抢场！")
+    for reload_attempt in range(5):
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(5)
+            # 验证页面是否加载成功
+            site_items = await page.query_selector_all('.sites-item')
+            if len(site_items) > 0:
+                print("[预订] 页面已刷新，准备抢场！")
+                break
+            print(f"[预订] 刷新后页面空白，重试 {reload_attempt + 1}/5...")
+        except Exception as e:
+            print(f"[预订] 刷新失败 ({e})，重试 {reload_attempt + 1}/5...")
+            await asyncio.sleep(3)
+    else:
+        print("[预订] 多次刷新仍无法加载，继续尝试...")
 
 

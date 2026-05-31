@@ -17,12 +17,13 @@ import os
 import yaml
 import schedule
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from auth import login, restore_session, save_session
 from reserve import wait_for_booking_open, reserve_slot, discover_page_structure, navigate_to_venue
 from notifier import notify_success, notify_failure, set_email_config, test_email
+
 
 # 工作目录设为脚本所在目录
 SCRIPT_DIR = Path(__file__).parent
@@ -314,11 +315,24 @@ def main():
     if next_run:
         print(f"  下次执行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
     print()
+    print("[系统] 脚本已就绪，等待定时触发...")
+    print()
 
+    last_heartbeat = ""
     try:
         while True:
             schedule.run_pending()
             time.sleep(1)
+            now = datetime.now()
+            minute_block = now.strftime("%H:%M")[:-1] + "0"
+            if minute_block != last_heartbeat:
+                last_heartbeat = minute_block
+                target_dt = now.replace(hour=target_h, minute=target_m, second=target_s, microsecond=0)
+                if target_dt <= now:
+                    target_dt = target_dt + timedelta(days=1)
+                remaining = (target_dt - now).total_seconds()
+                if remaining > 0:
+                    print(f"[心跳] {now.strftime('%H:%M:%S')}  距抢场还有 {remaining/60:.0f} 分钟")
     except KeyboardInterrupt:
         print("\n[系统] 已停止。")
 
