@@ -307,6 +307,7 @@ def main():
     print("[提示] 按 Ctrl+C 可停止。")
     print()
 
+    target_h, target_m, target_s = map(int, schedule_time.split(":"))
     schedule.every().day.at(schedule_time).do(scheduled_job, config=config)
 
     next_run = schedule.next_run()
